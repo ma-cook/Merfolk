@@ -1,0 +1,2 @@
+# Merfolk
+Merfolk syntax guide
