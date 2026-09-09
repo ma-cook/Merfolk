@@ -1,6 +1,6 @@
 # Merfolk Syntax Guide
 
-Merfolk is a 3D relational diagram language used to represent codebase architecture. Merfolk markdown files are parsed by the 3D AST generator and rendered as interactive 3D diagrams in Hoverchart. This guide covers the full syntax specification.
+Merfolk is a 3D relational diagram language used to represent codebase architecture. Merfolk markdown files are parsed by the 3D AST generator and rendered as interactive 3D diagrams in Hoverchart (Volscape.com). This guide covers the full syntax specification.
 
 Merfolk is embedded inside markdown files within ` ```merfolk ` fenced code blocks. A diagram title can optionally be added after the fence: ` ```merfolk "Title" `
 
@@ -142,7 +142,7 @@ Two label syntaxes are supported:
 App --> DataService : "uses"
 ```
 
-**Pipe style (Mermaid-compatible):**
+**Pipe style (Mermaid-compatible):**  
 ```merfolk
 App -->|"uses"| DataService
 ```
