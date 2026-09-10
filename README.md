@@ -1,30 +1,13 @@
-# Merfolk Syntax Guide
+# Merfolk Markdown Syntax Guide
 
-Merfolk is a 3D relational diagram language used to represent codebase architecture. Merfolk markdown files are parsed by the 3D AST generator and rendered as interactive 3D diagrams in Hoverchart (Volscape.com). This guide covers the full syntax specification.
+## Purpose
 
-Merfolk is embedded inside markdown files within ` ```merfolk ` fenced code blocks. A diagram title can optionally be added after the fence: ` ```merfolk "Title" `
+Merfolk is a 3D relational diagram language used to represent codebase architecture. Merfolk markdown files are parsed by the 3D AST generator and rendered as interactive 3D diagrams in Hoverchart. This guide covers the full syntax specification.
 
----
-
-## Table of Contents
-
-1. [Diagram Declaration](#diagram-declaration)
-2. [Comments](#comments)
-3. [Node Types](#node-types)
-4. [Node ID Rules](#node-id-rules)
-5. [Connection Types](#connection-types)
-6. [Labeled Connections](#labeled-connections)
-7. [Face Connections](#face-connections)
-8. [Node Properties](#node-properties)
-9. [Flow Path Tracking](#flow-path-tracking)
-   - [The `flowpath` Directive](#the-flowpath-directive)
-   - [The `#tag` Syntax](#the-tag-syntax-on-connections)
-   - [Combining Both Approaches](#combining-both-approaches)
-10. [Nested Grouping](#nested-grouping)
-11. [Container Grouping](#container-grouping)
-12. [Complete Example](#complete-example)
+Merfolk is embedded inside markdown files within ` ```merfolk ` fenced code blocks. A diagram title can optionally be added after the fence: ` ```merfolk "Title" `.
 
 ---
+
 
 ## Diagram Declaration
 
@@ -75,6 +58,7 @@ Nodes are declared with an identifier and a bracket style that determines its ty
 | `C[[Type: name]]` | Cube | Stores, data models |
 | `D((Type: name))` | Tetrahedron | Services, external APIs |
 | `E<Type: name>` | Cube | Libraries, datapaths |
+| `U~Person: name~` | Sphere | People, actors, roles |
 
 The label inside the brackets uses the format `Type: Display Name` where `Type` determines the node's semantic role.
 
@@ -96,14 +80,14 @@ The label inside the brackets uses the format `Type: Display Name` where `Type` 
 | `Datapath` | `data` | Datapath | `#FF9800` | Data pipelines (no 3D object rendered) |
 | `Endpoint` | `route` | Function | `#4CAF50` | API endpoints, routes |
 | `Guard` | `middleware` | Function | `#4CAF50` | Auth guards, middleware |
-| `Boundary` | — | Module | `#9C27B0` | Error boundaries, Suspense boundaries |
+| `Boundary` | — | Boundary | `#E0E0E0` | System/domain boundary (no object; encloses members) |
+| `Person` | `actor` | Person | `#FFC107` | People, actors, roles |
+| `Junction` | — | Junction | `#888888` | Merge/branch points (small cube) |
 | `Model` | — | Store | `#9C27B0` | Database models, schemas |
 
 Any unrecognized type keyword defaults to `Component` (dodecahedron).
 
----
-
-## Node ID Rules
+### Node ID Rules
 
 Node IDs may contain: `A-Z`, `a-z`, `0-9`, `_`, `/`, `.`, `-`
 
@@ -130,10 +114,22 @@ _scope/package[Function: handler]
 | `A == B` | Inheritance | Thick line | `#2196F3` | Inheritance, strong dependencies |
 | `A *--> B` | Composition | Filled arrow | `#FF9800` | Ownership, composition |
 | `A ..> B` | Dependency | Dotted arrow | `#9C27B0` | Imports, weak dependencies |
+| `A <-- B` | Reverse arrow | Arrow at the **source** end | `#4CAF50` | Control pointing back at the caller |
+| `A <--> B` | Bidirectional | Arrows at **both** ends | `#4CAF50` | Two-way relationships |
 
----
+### Per-End Arrow Decorators
 
-## Labeled Connections
+Any connection token can be decorated with an optional `<` prefix (draws an arrowhead at the **source** end) and/or `>` suffix (draws an arrowhead at the **target** end):
+
+```merfolk
+A <-- B      %% arrowhead pointing INTO A (source end)
+A <--> B     %% arrowheads at both ends
+B ---> A     %% plain arrow (equivalent to -->)
+```
+
+Guided (curved) connection tokens default to `arrowEnd = true`; headless and blocky tokens (`---`, `==`, `--`) render without arrowheads unless explicitly decorated. Legacy/undecorated connections render the same as before. Arrowheads are 3D cones that only appear when both endpoint objects are at FULL LOD detail.
+
+### Labeled Connections
 
 Two label syntaxes are supported:
 
@@ -142,7 +138,7 @@ Two label syntaxes are supported:
 App --> DataService : "uses"
 ```
 
-**Pipe style (Mermaid-compatible):**  
+**Pipe style (Mermaid-compatible):**
 ```merfolk
 App -->|"uses"| DataService
 ```
@@ -151,16 +147,16 @@ Labels are displayed on the 3D connection lines in the rendered diagram.
 
 ---
 
-## Face Connections
+## Face-Specific Connections
 
-Connect to a specific face of a node using the `@face` suffix.
+Connect to a specific face of a 3D object using the `@face` suffix on the node ID:
 
 ```merfolk
 A@front --> B@back : "direct connection"
 C@top --> D@bottom : "vertical flow"
 ```
 
-Available faces depend on the node geometry:
+Available faces depend on the node's geometry:
 
 | Geometry | Faces |
 | --- | --- |
@@ -312,9 +308,136 @@ The renderer automatically groups root nodes by type into labeled containers: **
 
 ---
 
-## Complete Example
+## LLM Indexing & Consumption
 
-The following example uses all node types and connection features together:
+Beyond authoring, Hoverchart indexes the Merfolk file and its parts so the LLM in Space Chat can reason about the architecture. This section documents how the diagram is stored, retrieved, and surfaced.
+
+### The Diagram Entry
+
+The full Merfolk markdown is indexed as a single ContentStore entry under the id `merfolk:diagram` (contentStoreWorker.js). It is:
+
+- Tagged `architecture`, `merfolk`, `diagram`
+- Chunked at **3000 characters with a 300-character overlap** (the repo-file chunk config) and keyword-indexed in the ContentStore's inverted index
+- **Persisted to IndexedDB**, so it survives a page refresh and can be re-read on demand
+
+### Hidden From `search_code`
+
+Because the entry's id uses the `merfolk:` prefix (not `repo:`), the `search_code` / `grep` tools do **not** scan it — raw Merfolk markdown is intentionally kept out of search results. The LLM accesses the diagram only through dedicated mechanisms, not free-text search.
+
+### Per-Node Scene Indexing
+
+Each parsed node that becomes a 3D object is also indexed individually as a `scene:<nodeId>` entry (contentStoreWorker.js), containing:
+
+```
+[<nodeId>] (<nodeType>) "<name>"
+```
+
+plus any inline code attached to the node. Each entry is tagged with its own node id, so individual nodes can be looked up directly.
+
+### The `architecture-map` Skill
+
+The primary way the LLM reads the diagram is by activating the `architecture-map` skill. When invoked, it:
+
+1. Fetches the `merfolk:diagram` entry from the ContentStore
+2. Reconstructs the exact original text via `joinChunks` (overlapping boundaries are removed so the text is byte-identical)
+3. Injects an **excerpt capped at 3000 characters** into the system prompt, truncated with `... (diagram truncated)` for larger diagrams
+
+This is presented alongside the component→file index, dependency graph summary, and detected architectural communities. The retrieval orchestrator also auto-loads `architecture-map`, `import-analysis`, and `community-architecture` for relevant tasks.
+
+### When It's Refreshed
+
+The `merfolk:diagram` entry is repopulated from the freshly generated markdown on **every scan** via `populateContentStoreWorker(diagramMarkdown)` — so after a rescan or runtime scan, the LLM sees the current architecture, not a stale copy.
+
+### Authoring Implications
+
+- Keep the diagram reasonably sized so the most important nodes appear within the **3000-character excerpt** the LLM sees by default; deeper parts are reachable via per-node `scene:` entries and the component/import graph skills.
+- Node **ids, types, and names** matter: they become the `scene:<nodeId>` entries the LLM uses to look up individual nodes, and the readable `name` is what appears in prompts.
+
+---
+
+## Explicit Containment
+
+Membership inside a parent node can be declared explicitly with the `in` keyword. The parent must be a component-style (container) node:
+
+```merfolk
+B{Component: Checkout Flow}
+S[Service: Payment] in <B>
+T[Function: validateCart] in <B>
+
+%% Or with a bare parent id
+U[Function: helper] in B
+
+%% Parent defined later is fine (forward references resolve after parse)
+N[Function: newFeature] in <API>
+API{Component: API Gateway}
+```
+
+Explicit `in` membership **overrides** automatic nesting from connection inference. Members are placed inside the parent's boundary at layout time, and the parent scales to contain them. The parent id survives the worker round-trip via node metadata.
+
+---
+
+## Boundaries and Junctions
+
+### Boundary
+
+A boundary draws a translucent container around its members:
+
+```merfolk
+{Boundary: PCI-DSS Zone}
+Payment[Service: Payment Gateway] in <PCI-DSS Zone>
+Refund[Function: Refund Handler] in <PCI-DSS Zone>
+```
+
+The boundary label doubles as the node id. Use it in `in <...>` membership and connections exactly like a normal id — spaces are allowed inside `<>` references (e.g. `in <PCI-DSS Zone>`); keep the label space-free if you also want to reference it in connection endpoints (e.g. `Zone --> API`). Any node placed inside a boundary via `in` becomes a member of the enclosing boundary. Boundaries render as translucent bounding boxes that scale to enclose their members; they are **not** regular 3D objects themselves.
+
+### Junction
+
+A junction is a small marker node used to visualize routing, merge, or branch points in a flow:
+
+```merfolk
+junction J1
+Router --> J1 : "dispatch"
+J1 --> ServiceA
+J1 --> ServiceB
+```
+
+Junctions render as small cubes and are excluded from container type-grouping.
+
+---
+
+## Directives (`align`, `style`, `relstyle`)
+
+### Alignment: `align row|column`
+
+Snap nodes onto a shared line. `align row A B C` places A, B, C on the same horizontal line (shared Y); `align column D E F` places D, E, F on the same vertical line (shared X). Positions within the row/column keep their existing relative spacing:
+
+```merfolk
+align row B U
+align column A E
+```
+
+### Styling: `style`
+
+Apply visual properties to a list of node ids *or type keywords* (matched by type — e.g. every `Service`). Supported properties: `color`, `opacity`, `scale`:
+
+```merfolk
+style Service, Datapath { color: "#FF9800" }
+style S3 { color: "#4CAF50", opacity: 0.9, scale: "1.5,1.5,1.5" }
+```
+
+### Connection styling: `relstyle`
+
+Style every connection of a given connection *type keyword*:
+
+```merfolk
+relstyle dataflow { color: "#00BCD4", lineStyle: "dashed" }
+```
+
+Supported properties: `color` (arrowheads follow the connection color), `opacity`, and `lineStyle` (`solid` | `dashed` | `dotted` | `thick`).
+
+---
+
+## Complete Example
 
 ```merfolk
 graph3d "E-Commerce Platform"
@@ -406,3 +529,7 @@ EmailService
 - Validate the syntax to ensure compatibility with the 3D AST generator.
 - Duplicate node IDs are silently skipped with a console warning.
 - References to undefined node IDs in connections produce a validation warning but are non-fatal.
+
+## Deliverable
+
+- Provide a `.md` file containing the Merfolk syntax inside a ` ```merfolk ` fenced code block for the 3D diagram.
